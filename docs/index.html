@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GreyboxGate for GenLayer</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, Arial, sans-serif; background:#f4f6f2; color:#161814; }
+    body { margin:0; } main { max-width:960px; margin:auto; padding:40px 20px 64px; }
+    header { border-bottom:1px solid #cfd6c9; padding-bottom:28px; } h1 { font-size:48px; margin:0 0 12px; } h2 { margin:0 0 12px; font-size:22px; }
+    p { color:#53604d; line-height:1.55; } .tag { display:inline-block; background:#dbead4; color:#31542d; padding:6px 10px; font-size:13px; font-weight:700; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; margin-top:24px; }
+    section { background:#fff; border:1px solid #d5dbd0; padding:20px; } label { display:block; font-size:13px; font-weight:700; margin:13px 0 6px; }
+    input, textarea { width:100%; box-sizing:border-box; padding:10px; border:1px solid #abb6a4; background:#fcfdfb; font:inherit; } textarea { min-height:92px; resize:vertical; }
+    button, .button { display:inline-block; border:0; background:#1f572d; color:#fff; padding:10px 14px; margin-top:14px; font:inherit; font-weight:700; text-decoration:none; cursor:pointer; }
+    button:disabled { background:#71816e; cursor:default; } .status { min-height:21px; font-size:14px; color:#31542d; margin-top:10px; } code { display:block; word-break:break-all; background:#edf1e9; padding:10px; font-size:12px; }
+    footer { margin-top:30px; font-size:14px; } a { color:#1f572d; }
+  </style>
+</head>
+<body><main>
+  <header>
+    <span class="tag">GENLAYER CONSENSUS SAFETY</span>
+    <h1>GreyboxGate</h1>
+    <p>A policy-bound gate for AI agents that receive untrusted instructions before they call sensitive tools or move value.</p>
+    <code id="contract">Studio contract: 0x2ce99d31bf921f25bBbf09cd35be1044364590a5</code>
+    <a class="button" target="_blank" rel="noreferrer" href="https://explorer-studio.genlayer.com/address/0x2ce99d31bf921f25bBbf09cd35be1044364590a5">Open deployed contract</a>
+  </header>
+  <div class="grid">
+    <section><h2>1. Bind a policy</h2><p>Record the named executor, recipient, action scope, spend and fee caps before an agent acts.</p>
+      <label>Executor wallet</label><input id="executor" placeholder="0x...">
+      <label>Allowed recipient</label><input id="recipient" placeholder="0x...">
+      <label>Action scope</label><input id="scope" value="purchase:approved-vendor">
+      <button data-step="policy">Connect wallet and register policy</button><div class="status"></div>
+    </section>
+    <section><h2>2. Screen untrusted input</h2><p>Validators render input and evidence, preserve commitments, and reject instructions that override the registered boundary.</p>
+      <label>Untrusted URL or message</label><textarea id="input" placeholder="Paste the instruction an agent received"></textarea>
+      <label>Supporting evidence URL</label><input id="evidence" placeholder="https://...">
+      <button data-step="assess">Connect wallet and request assessment</button><div class="status"></div>
+    </section>
+    <section><h2>3. Consume one receipt</h2><p>Only the registered executor can consume a valid unexpired action once. Final state must be read back from the contract.</p>
+      <label>Approved action ID</label><input id="action" placeholder="gba_...">
+      <button data-step="execute">Connect wallet and execute</button><div class="status"></div>
+    </section>
+  </div>
+  <footer>Source and reproducible deployment details: <a href="https://github.com/klopp78/greyboxgate-genlayer">GitHub repository</a>. This interface prompts a connected GenLayer wallet for workflow actions; it does not treat a local response as a consensus verdict.</footer>
+</main>
+<script>
+  async function connect() {
+    if (!window.ethereum) throw new Error('A GenLayer-compatible wallet is required.');
+    const accounts = await window.ethereum.request({ method:'eth_requestAccounts' });
+    if (!accounts || !accounts[0]) throw new Error('Wallet connection was not completed.');
+    return accounts[0];
+  }
+  document.querySelectorAll('button[data-step]').forEach((button) => button.addEventListener('click', async () => {
+    const status = button.nextElementSibling; button.disabled = true; status.textContent = 'Connecting wallet...';
+    try {
+      const account = await connect();
+      status.textContent = `Wallet ${account.slice(0,6)}... connected. Use the linked repository workflow or Studio contract to sign and finalize this ${button.dataset.step} action.`;
+    } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+  }));
+</script>
+</body></html>

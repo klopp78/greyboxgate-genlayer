@@ -2,6 +2,11 @@
 
 GreyboxGate is a consensus firewall for agent actions that originate from untrusted web content. It is built around the current GenLayer greyboxing and fee-aware Bradbury Phase 2 direction.
 
+## Live deployment
+
+- Studio contract: [`0x2ce99d31bf921f25bBbf09cd35be1044364590a5`](https://explorer-studio.genlayer.com/address/0x2ce99d31bf921f25bBbf09cd35be1044364590a5)
+- Public workflow page: `https://klopp78.github.io/greyboxgate-genlayer/`
+
 ## Workflow
 
 1. **Register policy**: bind owner, executor, recipient, action scope, spend cap, fee cap and a canonical policy source.
@@ -23,4 +28,4 @@ npm install
 npm test
 ```
 
-Deploy `contracts/greybox_gate.py` on Studio Next or a supported GenLayer environment. The web UI uses `genlayer-js` and reads back contract state after accepted transactions.
+The contract is deployed on Studio at the address above. The web UI uses `genlayer-js` and reads back contract state after accepted transactions.
