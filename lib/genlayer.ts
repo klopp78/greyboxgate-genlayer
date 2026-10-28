@@ -30,7 +30,16 @@ export async function assessAction(walletAddress: WalletAddress, values: string[
 
 export async function executeAction(walletAddress: WalletAddress, actionId: string, contractAddress?: `0x${string}`) {
   const sdk = client(walletAddress); await sdk.connect("studionet");
-  const hash = await sdk.writeContract({ address: address(contractAddress), functionName: "execute_approved_action", args: [actionId], value: BigInt(0), leaderOnly: false });
-  await sdk.waitForTransactionReceipt({ hash, status: TransactionStatus.ACCEPTED, fullTransaction: true });
+  const action = await readRecord("get_action", actionId, walletAddress, contractAddress);
+  const raw = typeof action === "string" ? action : JSON.stringify(action);
+  const parsed = JSON.parse(raw) as { state?: string; execution_ready?: boolean; expires_at?: number; intent?: { bound_executor?: string; executor?: string; amount?: number | string } };
+  const expectedExecutor = parsed.intent?.bound_executor ?? parsed.intent?.executor;
+  if (parsed.state !== "approved" || parsed.execution_ready !== true) throw new Error("The receipt is not approved for protected execution.");
+  if (!expectedExecutor || expectedExecutor.toLowerCase() !== walletAddress.toLowerCase()) throw new Error("Only the receipt-bound executor can release this payout.");
+  if (!parsed.expires_at || parsed.expires_at <= Math.floor(Date.now() / 1000)) throw new Error("The receipt has expired and cannot release funds.");
+  const value = BigInt(parsed.intent?.amount ?? 0);
+  if (value <= 0n) throw new Error("The receipt does not contain a positive payout amount.");
+  const hash = await sdk.writeContract({ address: address(contractAddress), functionName: "execute_approved_action", args: [actionId], value, leaderOnly: false });
+  await sdk.waitForTransactionReceipt({ hash, status: TransactionStatus.FINALIZED, fullTransaction: true });
   return { hash, record: await readRecord("get_execution", actionId, walletAddress, contractAddress) };
 }

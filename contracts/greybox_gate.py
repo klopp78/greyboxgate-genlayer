@@ -6,6 +6,15 @@ import json
 import typing
 
 
+@gl.evm.contract_interface
+class _Recipient:
+    class View:
+        pass
+
+    class Write:
+        pass
+
+
 class ActionVerdict(typing.NamedTuple):
     decision: str
     confidence: u8
@@ -64,7 +73,7 @@ class GreyboxGate(gl.Contract):
         return _canonical_json([value for value in self.action_ids])
 
     @gl.public.write
-    def register_policy(self, policy_name: str, bound_executor: str, approved_recipient: str, action_scope: str, spend_cap: str, fee_cap: str, policy_url: str) -> str:
+    def register_policy(self, policy_name: str, bound_executor: str, approved_recipient: str, action_scope: str, spend_cap: str, fee_cap: str, receipt_ttl_seconds: u64, policy_url: str) -> str:
         owner = _wallet(gl.message.sender_address)
         executor = _wallet(bound_executor)
         recipient = _wallet(approved_recipient)
@@ -72,6 +81,8 @@ class GreyboxGate(gl.Contract):
         scope = _text(action_scope, 96, "action_scope_required")
         spend = _positive(spend_cap, "spend_cap_invalid")
         fee = _non_negative(fee_cap, "fee_cap_invalid")
+        ttl = int(receipt_ttl_seconds)
+        if ttl < 60 or ttl > 86_400: raise Exception("receipt_ttl_must_be_between_60_and_86400")
         source = _source(policy_url, "policy")
 
         def leader_fn(): return _policy_commitment(name, owner, executor, recipient, scope, spend, fee, source)
@@ -81,10 +92,10 @@ class GreyboxGate(gl.Contract):
             except Exception: return False
 
         commitment = json.loads(gl.vm.run_nondet_unsafe(leader_fn, validator_fn))
-        policy_id = "gbp_" + _sha256(owner + "|" + executor + "|" + name + "|" + commitment["policy_hash"])[:20]
+        policy_id = "gbp_" + _sha256(owner + "|" + executor + "|" + name + "|" + str(ttl) + "|" + commitment["policy_hash"])[:20]
         if len(self.policies.get(policy_id, "")) > 0: raise Exception("policy_already_exists")
         self.policy_count = u64(int(self.policy_count) + 1)
-        record = {"schema_version":"greyboxgate.policy.v1","policy_id":policy_id,"owner":owner,"bound_executor":executor,"approved_recipient":recipient,"action_scope":scope,"spend_cap":spend,"fee_cap":fee,"policy_source":source,"policy_hash":commitment["policy_hash"],"policy_snapshot_hash":commitment["snapshot_hash"],"consumed_amount":0,"consumed_fee":0,"created_sequence":int(self.policy_count)}
+        record = {"schema_version":"greyboxgate.policy.v2","policy_id":policy_id,"owner":owner,"bound_executor":executor,"approved_recipient":recipient,"action_scope":scope,"spend_cap":spend,"fee_cap":fee,"receipt_ttl_seconds":ttl,"policy_source":source,"policy_hash":commitment["policy_hash"],"policy_snapshot_hash":commitment["snapshot_hash"],"consumed_amount":0,"consumed_fee":0,"created_sequence":int(self.policy_count)}
         self.policies[policy_id] = _canonical_json(record)
         self.policy_ids.append(policy_id)
         self.latest_policy_id = policy_id
@@ -99,10 +110,12 @@ class GreyboxGate(gl.Contract):
         target = _wallet(recipient)
         requested_amount = _positive(amount, "amount_invalid")
         requested_fee = _non_negative(max_fee, "max_fee_invalid")
+        now = _now()
+        if now <= 0: raise Exception("network_timestamp_unavailable")
         if requested_amount + int(policy["consumed_amount"]) > int(policy["spend_cap"]): raise Exception("spend_cap_exceeded")
         if requested_fee + int(policy["consumed_fee"]) > int(policy["fee_cap"]): raise Exception("fee_cap_exceeded")
         sources = [_source(untrusted_input_url, "untrusted_input"), _source(evidence_url, "evidence")]
-        intent = {"policy_id":policy_id,"owner":policy["owner"],"bound_executor":policy["bound_executor"],"recipient":target,"action_kind":kind,"amount":requested_amount,"max_fee":requested_fee,"policy_hash":policy["policy_hash"]}
+        intent = {"policy_id":policy_id,"owner":policy["owner"],"bound_executor":policy["bound_executor"],"recipient":target,"action_kind":kind,"amount":requested_amount,"max_fee":requested_fee,"expires_at":now + int(policy["receipt_ttl_seconds"]),"policy_hash":policy["policy_hash"]}
 
         def leader_fn(): return _assess(policy, intent, sources)
         def validator_fn(result) -> bool:
@@ -116,13 +129,13 @@ class GreyboxGate(gl.Contract):
         action_id = "gba_" + _sha256(policy_id + "|" + verdict["intent_hash"] + "|" + verdict["snapshot_hash"])[:20]
         if len(self.actions.get(action_id, "")) > 0: raise Exception("action_already_assessed")
         approved = verdict["decision"] == "approved" and verdict["input_safe"] and verdict["scope_ok"] and verdict["amount_ok"]
-        action = {"schema_version":"greyboxgate.action.v1","action_id":action_id,"policy_id":policy_id,"requester":requester,"intent":intent,"intent_hash":verdict["intent_hash"],"snapshot_hash":verdict["snapshot_hash"],"safety_hash":verdict["safety_hash"],"source_manifest":sources,"consensus_result":verdict,"state":"approved" if approved else "blocked","execution_ready":approved}
+        action = {"schema_version":"greyboxgate.action.v2","action_id":action_id,"policy_id":policy_id,"requester":requester,"intent":intent,"intent_hash":verdict["intent_hash"],"snapshot_hash":verdict["snapshot_hash"],"safety_hash":verdict["safety_hash"],"source_manifest":sources,"consensus_result":verdict,"expires_at":intent["expires_at"],"state":"approved" if approved else "blocked","execution_ready":approved}
         self.actions[action_id] = _canonical_json(action)
         self.action_ids.append(action_id)
         self.latest_action_id = action_id
         return action_id
 
-    @gl.public.write
+    @gl.public.write.payable
     def execute_approved_action(self, action_id: str) -> str:
         action = _load(self.actions.get(action_id, ""), "action_not_found")
         policy = _load(self.policies.get(action["policy_id"], ""), "policy_not_found")
@@ -131,18 +144,24 @@ class GreyboxGate(gl.Contract):
         if action["state"] != "approved" or action["execution_ready"] is not True: raise Exception("action_requires_approved_consensus_receipt")
         if len(self.executions.get(action_id, "")) > 0: raise Exception("action_already_executed")
         intent = action["intent"]
+        now = _now()
+        if now <= 0 or now >= int(action["expires_at"]) or now >= int(intent["expires_at"]): raise Exception("consensus_receipt_expired")
         if intent["recipient"] != policy["approved_recipient"]: raise Exception("recipient_not_authorized_by_policy")
         if intent["action_kind"] != policy["action_scope"]: raise Exception("action_scope_not_authorized")
         if int(intent["amount"]) <= 0 or int(intent["amount"]) + int(policy["consumed_amount"]) > int(policy["spend_cap"]): raise Exception("execution_exceeds_spend_cap")
         if int(intent["max_fee"]) + int(policy["consumed_fee"]) > int(policy["fee_cap"]): raise Exception("execution_exceeds_fee_cap")
         if _sha256(_canonical_json(intent)) != action["intent_hash"]: raise Exception("intent_binding_invalid")
+        expected_value = u256(int(intent["amount"]))
+        if expected_value == u256(0) or gl.message.value != expected_value: raise Exception("protected_payout_value_must_match_receipt")
         policy["consumed_amount"] = int(policy["consumed_amount"]) + int(intent["amount"])
         policy["consumed_fee"] = int(policy["consumed_fee"]) + int(intent["max_fee"])
         action["state"], action["execution_ready"] = "executed", False
-        execution = {"schema_version":"greyboxgate.execution.v1","action_id":action_id,"executor":executor,"recipient":intent["recipient"],"amount":intent["amount"],"fee_cap":intent["max_fee"],"intent_hash":action["intent_hash"],"snapshot_hash":action["snapshot_hash"],"status":"executed"}
+        execution = {"schema_version":"greyboxgate.execution.v2","action_id":action_id,"executor":executor,"recipient":intent["recipient"],"paid_wei":str(expected_value),"fee_cap":intent["max_fee"],"intent_hash":action["intent_hash"],"snapshot_hash":action["snapshot_hash"],"expires_at":action["expires_at"],"executed_at":now,"status":"protected_payout_executed"}
         self.policies[action["policy_id"]] = _canonical_json(policy)
         self.actions[action_id] = _canonical_json(action)
         self.executions[action_id] = _canonical_json(execution)
+        # The named executor's wallet must supply the exact receipt-bound value. A failed transfer reverts this lifecycle write.
+        _Recipient(Address(intent["recipient"])).emit_transfer(value=gl.message.value)
         return _sha256(_canonical_json(execution))[:24]
 
 
@@ -215,3 +234,9 @@ def _canonical_json(value) -> str:
 
 def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+def _now() -> int:
+    try:
+        return int(gl.block.timestamp)
+    except Exception:
+        return 0

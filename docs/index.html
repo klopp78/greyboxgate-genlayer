@@ -21,42 +21,64 @@
   <header>
     <span class="tag">GENLAYER CONSENSUS SAFETY</span>
     <h1>GreyboxGate</h1>
-    <p>A policy-bound gate for AI agents that receive untrusted instructions before they call sensitive tools or move value.</p>
-    <code id="contract">Studio contract: 0x2ce99d31bf921f25bBbf09cd35be1044364590a5</code>
-    <a class="button" target="_blank" rel="noreferrer" href="https://explorer-studio.genlayer.com/address/0x2ce99d31bf921f25bBbf09cd35be1044364590a5">Open deployed contract</a>
+    <p>A policy-bound payment gate for AI agents receiving untrusted instructions. An approved receipt can release GEN only through its named executor, fixed recipient, exact amount, and on-chain expiry.</p>
+    <label>Studio contract address</label><input id="contractAddress" value="DEPLOYED_CONTRACT" spellcheck="false">
+    <a class="button" id="explorer" target="_blank" rel="noreferrer" href="#">Open deployed contract</a>
   </header>
   <div class="grid">
-    <section><h2>1. Bind a policy</h2><p>Record the named executor, recipient, action scope, spend and fee caps before an agent acts.</p>
-      <label>Executor wallet</label><input id="executor" placeholder="0x...">
-      <label>Allowed recipient</label><input id="recipient" placeholder="0x...">
-      <label>Action scope</label><input id="scope" value="purchase:approved-vendor">
-      <button data-step="policy">Connect wallet and register policy</button><div class="status"></div>
-    </section>
-    <section><h2>2. Screen untrusted input</h2><p>Validators render input and evidence, preserve commitments, and reject instructions that override the registered boundary.</p>
-      <label>Untrusted URL or message</label><textarea id="input" placeholder="Paste the instruction an agent received"></textarea>
-      <label>Supporting evidence URL</label><input id="evidence" placeholder="https://...">
-      <button data-step="assess">Connect wallet and request assessment</button><div class="status"></div>
-    </section>
-    <section><h2>3. Consume one receipt</h2><p>Only the registered executor can consume a valid unexpired action once. Final state must be read back from the contract.</p>
+    <section><h2>1. Consensus receipt</h2><p>Policies and assessments are created in the full workflow application. Paste an approved action ID here to inspect the resulting on-chain receipt before a wallet can send value.</p>
       <label>Approved action ID</label><input id="action" placeholder="gba_...">
-      <button data-step="execute">Connect wallet and execute</button><div class="status"></div>
+      <button id="inspect">Connect wallet and inspect</button><div class="status" id="inspectStatus"></div>
+    </section>
+    <section><h2>2. Protected payout</h2><p>The named executor supplies the exact receipt-bound GEN amount. The contract checks the receipt is approved, unexpired, unused, and still matches the policy, then transfers only to the policy-fixed recipient.</p>
+      <label>Receipt summary</label><code id="summary">Inspect an action to load its executor, recipient, amount, and expiry.</code>
+      <button id="execute">Sign protected payout</button><div class="status" id="executeStatus"></div>
+    </section>
+    <section><h2>3. Final record</h2><p>After consensus finality, the page reads the execution record back from GreyboxGate. A transaction response alone is not displayed as success.</p>
+      <label>Execution receipt</label><code id="execution">No protected payout has been read yet.</code>
     </section>
   </div>
-  <footer>Source and reproducible deployment details: <a href="https://github.com/klopp78/greyboxgate-genlayer">GitHub repository</a>. This interface prompts a connected GenLayer wallet for workflow actions; it does not treat a local response as a consensus verdict.</footer>
+  <footer>Source, workflow application, and tests: <a href="https://github.com/klopp78/greyboxgate-genlayer">GitHub repository</a>. This console reads the deployed contract, requires a wallet signature for a real protected payout, and reads final contract state back after the transaction.</footer>
 </main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
 <script>
+  const abi = ["function get_action(string) view returns (string)", "function get_execution(string) view returns (string)", "function execute_approved_action(string) payable returns (string)"];
+  let contract, account, action;
+  const addressInput = document.querySelector('#contractAddress');
+  const explorer = document.querySelector('#explorer');
+  function setExplorer() { explorer.href = `https://explorer-studio.genlayer.com/address/${addressInput.value.trim()}`; }
+  setExplorer(); addressInput.addEventListener('input', setExplorer);
   async function connect() {
     if (!window.ethereum) throw new Error('A GenLayer-compatible wallet is required.');
-    const accounts = await window.ethereum.request({ method:'eth_requestAccounts' });
-    if (!accounts || !accounts[0]) throw new Error('Wallet connection was not completed.');
-    return accounts[0];
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner(); account = await signer.getAddress();
+    contract = new ethers.Contract(addressInput.value.trim(), abi, signer); return account;
   }
-  document.querySelectorAll('button[data-step]').forEach((button) => button.addEventListener('click', async () => {
-    const status = button.nextElementSibling; button.disabled = true; status.textContent = 'Connecting wallet...';
+  async function inspect() {
+    const status = document.querySelector('#inspectStatus'); status.textContent = 'Connecting wallet and reading receipt...';
     try {
-      const account = await connect();
-      status.textContent = `Wallet ${account.slice(0,6)}... connected. Use the linked repository workflow or Studio contract to sign and finalize this ${button.dataset.step} action.`;
-    } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
-  }));
+      await connect(); const id = document.querySelector('#action').value.trim(); if (!id) throw new Error('Enter an approved action ID.');
+      action = JSON.parse(await contract.get_action(id)); const intent = action.intent || {};
+      if (action.state !== 'approved' || action.execution_ready !== true) throw new Error('This receipt is not approved for protected execution.');
+      if (String(intent.bound_executor || '').toLowerCase() !== account.toLowerCase()) throw new Error('Connected wallet is not the receipt-bound executor.');
+      if (!Number(action.expires_at) || Number(action.expires_at) <= Math.floor(Date.now() / 1000)) throw new Error('The consensus receipt is expired.');
+      if (!intent.amount || BigInt(intent.amount) <= 0n) throw new Error('The receipt has no positive protected payout amount.');
+      document.querySelector('#summary').textContent = JSON.stringify({executor:intent.bound_executor, recipient:intent.recipient, amount_wei:intent.amount, expires_at:action.expires_at, intent_hash:action.intent_hash, snapshot_hash:action.snapshot_hash}, null, 2);
+      status.textContent = `Receipt ready for ${account.slice(0, 6)}... Only the exact bound amount can be sent before expiry.`;
+    } catch (error) { action = undefined; status.textContent = error.message; }
+  }
+  document.querySelector('#inspect').addEventListener('click', inspect);
+  document.querySelector('#execute').addEventListener('click', async () => {
+    const status = document.querySelector('#executeStatus'); status.textContent = 'Checking receipt...';
+    try {
+      if (!action) await inspect(); if (!action || !contract) throw new Error('Inspect a valid receipt before signing.');
+      if (Number(action.expires_at) <= Math.floor(Date.now() / 1000)) throw new Error('The consensus receipt is expired.');
+      const tx = await contract.execute_approved_action(action.action_id, { value: BigInt(action.intent.amount) });
+      status.textContent = 'Waiting for finalized protected payout...'; const receipt = await tx.wait();
+      if (!receipt || receipt.status !== 1) throw new Error('Payout did not finalize successfully.');
+      const execution = await contract.get_execution(action.action_id); if (!execution) throw new Error('No execution record was found after finality.');
+      document.querySelector('#execution').textContent = execution; status.textContent = 'Protected payout finalized and read back from contract state.';
+    } catch (error) { status.textContent = error.message; }
+  });
 </script>
 </body></html>
