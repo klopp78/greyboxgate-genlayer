@@ -2,7 +2,7 @@ import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
-export const GREYBOX_GATE_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_GREYBOX_GATE_CONTRACT_ADDRESS ?? "0x2ce99d31bf921f25bBbf09cd35be1044364590a5") as `0x${string}`;
+export const GREYBOX_GATE_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_GREYBOX_GATE_CONTRACT_ADDRESS ?? "0xa7f29E5e1e12A050E4E2e64E8A2135F83CCeE7f6") as `0x${string}`;
 export type WalletAddress = `0x${string}`;
 
 function client(walletAddress?: WalletAddress) { return createClient({ chain: studionet, account: walletAddress }); }

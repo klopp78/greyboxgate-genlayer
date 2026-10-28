@@ -4,7 +4,7 @@ GreyboxGate is a consensus firewall for agent actions that originate from untrus
 
 ## Current deployment
 
-- Studio contract: the v1 deployment is retained at [`0x2ce99d31bf921f25bBbf09cd35be1044364590a5`](https://explorer-studio.genlayer.com/address/0x2ce99d31bf921f25bBbf09cd35be1044364590a5). The v2 protected-payout deployment will be recorded here after Studio deployment.
+- Studio contract: [`0xa7f29E5e1e12A050E4E2e64E8A2135F83CCeE7f6`](https://explorer-studio.genlayer.com/address/0xa7f29E5e1e12A050E4E2e64E8A2135F83CCeE7f6) is the v2 protected-payout deployment. The v1 deployment is retained at [`0x2ce99d31bf921f25bBbf09cd35be1044364590a5`](https://explorer-studio.genlayer.com/address/0x2ce99d31bf921f25bBbf09cd35be1044364590a5).
 - Public workflow page: `https://klopp78.github.io/greyboxgate-genlayer/`
 
 ## Workflow
